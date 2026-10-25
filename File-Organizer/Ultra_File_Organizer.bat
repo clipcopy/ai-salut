@@ -47,7 +47,7 @@ set "L_Fonts=,ttf,otf,woff,woff2,"
 :menu
 cls
 echo ==============================================
-echo            ULTRA FILE ORGANIZER
+echo      ULTRA FILE ORGANIZER @k0wk <- github
 echo ==============================================
 echo  Folder: %TARGET%
 echo.
