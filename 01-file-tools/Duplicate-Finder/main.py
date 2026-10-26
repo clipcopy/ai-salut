@@ -1,3 +1,7 @@
+# Author: github.com/clipcopy
+# 10-26-26
+
+
 import os
 import sys
 import csv
