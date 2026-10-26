@@ -1,135 +1,205 @@
-# Author: github.com/clipcopy
-# 10-26-26
-
-import argparse
 import os
 import sys
-import shutil
+import csv
+import time
+import hashlib
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from .scanner import Scanner
-from .hasher import Hasher
-from .reporter import Reporter
-from .config import Colors, HASH_ALGO
+# ==========================================
+# CONFIG & COLORS
+# ==========================================
+CHUNK_SIZE = 8192
+HASH_ALGO = 'sha256'
+DEFAULT_EXCLUDES = ['.git', '__pycache__', 'node_modules', '.venv', 'venv']
 
-def print_summary(duplicates, total_files, wasted_space):
-    print(f"\n{Colors.HEADER}=== Scan Complete ==={Colors.ENDC}")
-    print(f"Total Files Scanned: {total_files}")
-    print(f"Duplicate Groups:    {len(duplicates)}")
-    print(f"Space Wasted:        {Colors.WARNING}{wasted_space}{Colors.ENDC}\n")
+if os.name == 'nt':
+    os.system('color')
 
-def interactive_delete(duplicates, hasher):
-    print(f"\n{Colors.WARNING}INTERACTIVE DELETION MODE{Colors.ENDC}")
-    for idx, (hash_val, files) in enumerate(duplicates.items(), 1):
-        print(f"\nGroup {idx} - {len(files)} copies:")
-        for i, file in enumerate(files, 1):
-            print(f"  [{i}] {file}")
-        
-        choice = input(f"Keep which file? (1-{len(files)}) [Enter to skip]: ").strip()
-        if not choice:
-            continue
-            
-        try:
-            keep_idx = int(choice) - 1
-            if keep_idx < 0 or keep_idx >= len(files):
-                print("Invalid selection. Skipping group.")
-                continue
-            
-            for i, file in enumerate(files):
-                if i != keep_idx:
-                    os.remove(file)
-                    print(f"  {Colors.FAIL}Deleted: {file}{Colors.ENDC}")
-            print(f"  {Colors.OKGREEN}Kept: {files[keep_idx]}{Colors.ENDC}")
-            
-        except ValueError:
-            print("Invalid input. Skipping group.")
+class C:
+    HEADER = '\033[95m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
 
-def main():
-    parser = argparse.ArgumentParser(description="Duplicate File Finder Tool")
-    parser.add_argument("paths", nargs="+", help="Directory paths to scan")
-    parser.add_argument("-o", "--output", default="duplicate_report", help="Output filename (no extension)")
-    parser.add_argument("--min-size", type=int, default=0, help="Minimum file size in bytes")
-    parser.add_argument("--max-size", type=int, default=None, help="Maximum file size in bytes")
-    parser.add_argument("--interactive", action="store_true", help="Interactively select files to delete")
-    parser.add_argument("--delete-all", action="store_true", help="Auto-delete all but the oldest duplicate")
+# ==========================================
+# HELPERS
+# ==========================================
+def human_size(b):
+    if b == 0: return "0B"
+    names = ("B", "KB", "MB", "GB", "TB", "PB")
+    i = 0
+    while b >= 1024 and i < len(names) - 1:
+        b /= 1024.0
+        i += 1
+    return f"{b:.2f} {names[i]}"
+
+def get_hash(filepath):
+    h = hashlib.new(HASH_ALGO)
+    try:
+        with open(filepath, 'rb') as f:
+            while chunk := f.read(CHUNK_SIZE):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return None
+
+# ==========================================
+# CORE LOGIC
+# ==========================================
+def scan_and_hash(base_path, excludes, min_size):
+    size_map = defaultdict(list)
+    total_files = 0
+
+    print(f"\n{C.OKCYAN}Scanning {base_path}...{C.ENDC}")
     
-    args = parser.parse_args()
-
-    # 1. Scan
-    print(f"{Colors.OKCYAN}Scanning directories...{Colors.ENDC}")
-    scanner = Scanner(args.paths, min_size=args.min_size, max_size=args.max_size)
+    # 1. Group by size first
+    for root, dirs, files in os.walk(base_path):
+        dirs[:] = [d for d in dirs if d not in excludes]
+        for f in files:
+            if f in excludes: continue
+            fp = os.path.join(root, f)
+            try:
+                sz = os.path.getsize(fp)
+                if sz >= min_size:
+                    size_map[sz].append(fp)
+                    total_files += 1
+                    if total_files % 100 == 0:
+                        sys.stdout.write(f"\rFiles found: {total_files}")
+                        sys.stdout.flush()
+            except OSError:
+                pass
+                
+    print(f"\rFiles found: {total_files}")
     
-    def progress(count, force=False):
-        sys.stdout.write(f"\rFiles found: {count}")
-        sys.stdout.flush()
-        
-    size_candidates, total_files = scanner.scan(progress_callback=progress)
-    print() # New line after progress
+    # Filter out unique sizes
+    candidates = {sz: fps for sz, fps in size_map.items() if len(fps) > 1}
+    
+    if not candidates:
+        return {}, total_files
 
-    if not size_candidates:
-        print(f"{Colors.OKGREEN}No potential duplicates found by size.{Colors.ENDC}")
-        return
-
-    # 2. Hash Candidates
-    print(f"{Colors.OKCYAN}Hashing {sum(len(v) for v in size_candidates.values())} candidate files...{Colors.ENDC}")
-    hasher = Hasher()
+    print(f"{C.OKCYAN}Hashing {sum(len(v) for v in candidates.values())} candidates...{C.ENDC}")
+    
+    # 2. Hash only candidates
     duplicates = {}
-    
-    def process_group(file_group):
-        local_dupes = {}
-        for file in file_group:
-            h = hasher.hash_file(file)
+    def process_group(fps):
+        local_dupes = defaultdict(list)
+        for fp in fps:
+            h = get_hash(fp)
             if h:
-                local_dupes.setdefault(h, []).append(file)
+                local_dupes[h].append(fp)
         return local_dupes
 
-    with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
-        results = executor.map(process_group, size_candidates.values())
+    with ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        results = pool.map(process_group, candidates.values())
+        
+    for res in results:
+        for h, fps in res.items():
+            if len(fps) > 1:
+                duplicates[h] = fps
+                
+    return duplicates, total_files
 
-    # Merge results
-    for result in results:
-        for h, files in result.items():
-            if len(files) > 1:
-                duplicates[h] = files
+# ==========================================
+# REPORTS & ACTIONS
+# ==========================================
+def save_reports(dupes, total, wasted, base_name):
+    txt_file = f"{base_name}.txt"
+    csv_file = f"{base_name}.csv"
+    
+    # TXT
+    with open(txt_file, 'w', encoding='utf-8') as f:
+        f.write(f"Total Scanned: {total}\n")
+        f.write(f"Duplicate Groups: {len(dupes)}\n")
+        f.write(f"Space Wasted: {human_size(wasted)}\n\n")
+        for idx, (h, fps) in enumerate(dupes.items(), 1):
+            f.write(f"--- Group {idx} ---\n")
+            for fp in fps:
+                f.write(f"{fp} ({human_size(os.path.getsize(fp))})\n")
+            f.write("\n")
+            
+    # CSV
+    with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['Group', 'Hash', 'Path', 'Size', 'Readable Size'])
+        for idx, (h, fps) in enumerate(dupes.items(), 1):
+            for fp in fps:
+                sz = os.path.getsize(fp)
+                w.writerow([idx, h, fp, sz, human_size(sz)])
+                
+    print(f"{C.OKGREEN}[+] Reports saved: {txt_file} & {csv_file}{C.ENDC}")
 
-    if not duplicates:
-        print(f"{Colors.OKGREEN}No duplicates found.{Colors.ENDC}")
+def interactive_delete(dupes):
+    print(f"\n{C.WARNING}--- INTERACTIVE DELETION ---{C.ENDC}")
+    for idx, (h, fps) in enumerate(dupes.items(), 1):
+        print(f"\nGroup {idx} ({len(fps)} files):")
+        for i, fp in enumerate(fps, 1):
+            print(f"  [{i}] {fp}")
+            
+        choice = input(f"Keep which? (1-{len(fps)}) [Enter to skip]: ").strip()
+        if not choice: continue
+        
+        try:
+            keep = int(choice) - 1
+            if 0 <= keep < len(fps):
+                for i, fp in enumerate(fps):
+                    if i != keep:
+                        os.remove(fp)
+                        print(f"  {C.FAIL}Deleted: {fp}{C.ENDC}")
+                print(f"  {C.OKGREEN}Kept: {fps[keep]}{C.ENDC}")
+        except ValueError:
+            print("Invalid input. Skipping.")
+
+# ==========================================
+# MAIN
+# ==========================================
+def main():
+    print(f"{C.HEADER}{C.BOLD}=== Duplicate File Finder ==={C.ENDC}\n")
+    
+    # Ask for path
+    path_input = input(f"{C.OKCYAN}Enter the folder path to scan: {C.ENDC}").strip()
+    
+    # Clean up quotes if user drag-and-dropped a folder into CMD
+    if path_input.startswith('"') and path_input.endswith('"'):
+        path_input = path_input[1:-1]
+        
+    if not os.path.isdir(path_input):
+        print(f"{C.FAIL}[-] Error: The path '{path_input}' does not exist or is not a directory.{C.ENDC}")
         return
 
-    # 3. Calculate Wasted Space
-    wasted_bytes = 0
-    for files in duplicates.values():
-        wasted_bytes += os.path.getsize(files[0]) * (len(files) - 1)
+    # Ask for reports
+    output_name = input(f"{C.OKCYAN}Enter report name (default: dupes_report): {C.ENDC}").strip()
+    if not output_name:
+        output_name = "dupes_report"
+
+    # Ask for interactive delete
+    do_delete = input(f"{C.OKCYAN}Enable interactive deletion? (y/N): {C.ENDC}").strip().lower()
+
+    # Run Scan
+    dupes, total = scan_and_hash(path_input, DEFAULT_EXCLUDES, 0)
+
+    if not dupes:
+        print(f"{C.OKGREEN}No duplicates found.{C.ENDC}")
+        return
+
+    wasted = sum(os.path.getsize(fps[0]) * (len(fps) - 1) for fps in dupes.values())
     
-    wasted_str = f"{wasted_bytes / (1024*1024):.2f} MB"
-    print_summary(duplicates, total_files, wasted_str)
+    print(f"\n{C.HEADER}=== Summary ==={C.ENDC}")
+    print(f"Total Files:   {total}")
+    print(f"Groups Found:  {len(dupes)}")
+    print(f"Space Wasted:  {C.WARNING}{human_size(wasted)}{C.ENDC}")
 
-    # 4. Report
-    txt_file = f"{args.output}.txt"
-    csv_file = f"{args.output}.csv"
-    Reporter.generate_txt(duplicates, total_files, wasted_bytes, txt_file)
-    Reporter.generate_csv(duplicates, csv_file)
-    print(f"{Colors.OKGREEN}Reports saved: {txt_file}, {csv_file}{Colors.ENDC}")
+    save_reports(dupes, total, wasted, output_name)
 
-    # 5. Actions
-    if args.interactive:
-        interactive_delete(duplicates, hasher)
-    elif args.delete_all:
-        confirm = input(f"{Colors.FAIL}WARNING: Delete all duplicates (keep oldest in each group)? (y/N): {Colors.ENDC}").strip().lower()
-        if confirm == 'y':
-            for files in duplicates.values():
-                # Sort by creation time, keep oldest
-                files_sorted = sorted(files, key=lambda x: os.path.getctime(x))
-                for file in files_sorted[1:]:
-                    try:
-                        os.remove(file)
-                        print(f"Deleted: {file}")
-                    except OSError as e:
-                        print(f"Failed to delete {file}: {e}")
+    if do_delete == 'y':
+        interactive_delete(dupes)
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print(f"\n{Colors.WARNING}Operation cancelled by user.{Colors.ENDC}")
+        print(f"\n{C.FAIL}Cancelled.{C.ENDC}")
         sys.exit(1)
