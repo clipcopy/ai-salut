@@ -1,9 +1,16 @@
 # Author: github.com/clipcopy
 # 10-26-26
 
-import hashlib
+import argparse
 import os
-from .config import HASH_ALGO, CHUNK_SIZE
+import sys
+import shutil
+from concurrent.futures import ThreadPoolExecutor
+
+from scanner import Scanner
+from hasher import Hasher
+from reporter import Reporter
+from config import Colors, HASH_ALGO
 
 class Hasher:
     def __init__(self):
