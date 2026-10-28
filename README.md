@@ -1,47 +1,48 @@
-What's inside
+ai-salut
 
-| Tool | What it does | The feature that makes it different |
+A collection of simple Python tools, built with AI, for everyday tasks.
 
-| VaultSmith · `password_generator.py` | Random, passphrase, pronounceable & PIN password generator | Self-healing generation — every password is scanned for weak patterns and auto-regenerated until it's clean, plus a color "DNA" fingerprint so you can recognize a password at a glance without ever displaying it |
-| SweepVault · `temp_cleaner.py` | Finds and clears temp/cache junk across Windows, macOS & Linux | Full undo — nothing is deleted outright, it's quarantined in an Undo Vault you can restore with one menu choice, plus a safety gate that skips anything that might still be in use |
-| TextScope · `word_counter.py` | Word/character counter with readability stats | Cut-line preview — shows the exact point X/Twitter, Instagram, LinkedIn, SEO titles or SMS would chop your text off, so you see what readers actually get instead of guessing |
-| VoiceVault · `main.py` | Audio/video transcriber (Whisper-powered, English/Tagalog + more) | Resumable batches — interrupted halfway through 200 files? Run it again and it picks up exactly where it left off, plus subtitle export with a confidence map flagging lines worth double-checking |
+Every tool is one file. No setup steps, no config to edit first. You just run it and a menu shows up.
 
-Every tool shares the same DNA: a clean banner, a numbered menu, sane defaults on Enter, and code that's commented well enough to actually learn from.
+How to run
 
-Why you'd want these
-
-- Zero setup friction. Most tools here run on the Python standard library alone. The one exception (VoiceVault) tells you exactly what to `pip install` if it's missing — it won't just crash on you.
-- Built to be read, not just run. Every file is organized into clearly labeled sections with short, honest comments. If you've ever opened a "simple script" and found 400 unreadable lines, these aren't that.
-- Safety-minded by default. Destructive actions ask before they act, dry-runs exist where it matters, and SweepVault literally won't let you lose a file you didn't mean to delete.
-- Not a toy. These aren't "hello world" scripts dressed up — entropy math, offline-attack crack-time estimates, GSM-7 SMS segmentation, Whisper confidence scoring. The kind of detail you'd expect from a paid app, free and readable.
-
-Quick start
-
-```bash
-git clone https://github.com/clipcopy/ai-salut.git
-cd ai-salut
-
-run whichever tool you need
 python3 password_generator.py
 python3 temp_cleaner.py
 python3 word_counter.py
-python3 main.py          # VoiceVault — needs: pip install openai-whisper, and ffmpeg on PATH
-```
+python3 main.py
 
-Each tool opens straight into a banner and a menu. No flags to memorize, no docs to read first — just pick a number.
+The last one, main.py, is the transcriber. It needs Whisper installed first. Run pip install openai-whisper, and make sure ffmpeg is installed on your computer.
 
-Project structure
+What each tool does
 
-```
-ai-salut/
-├── password_generator.py   # VaultSmith
-├── temp_cleaner.py         # SweepVault
-├── word_counter.py         # TextScope
-├── main.py                 # VoiceVault
-└── README.md
-```
+password_generator.py
+Makes passwords for you. Random passwords, passphrases made of real words, passwords you can actually pronounce, and PINs. It checks every password for weak patterns before showing it to you, so you never get something like aaaa1111 or abcd1234.
 
-A note on how these are built
+temp_cleaner.py
+Finds and clears junk files like temp folders and app caches. Before deleting anything, it shows you what it found and asks for confirmation. Nothing is deleted right away either. It gets moved to a safe folder first, so you can undo a clean if you change your mind.
 
-Every tool here starts from a real request, gets built as a single readable file, and gets actually run before it's handed over — not just written and hoped for. If a tool claims a feature, that feature was tested in this repo, not assumed.
+word_counter.py
+Counts words and characters in any text. Tells you how long it takes to read or speak out loud, shows your most used words, and checks if your text fits within limits for places like X, Instagram, LinkedIn, or SMS.
+
+main.py
+Turns audio or video files into text. Works in English, Tagalog, and other languages. If you stop it partway through a big batch of files, running it again continues from where it left off instead of starting over.
+
+Why use these
+
+Nothing to configure before your first run.
+Every file is written clearly, so you can read and understand what it does.
+Nothing deletes or changes files without asking first.
+Each tool was tested before being shared here.
+
+Project files
+
+password_generator.py
+temp_cleaner.py
+word_counter.py
+main.py
+README.md
+
+Author
+
+github.com/clipcopy
+10-27-26
